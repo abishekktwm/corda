@@ -17,6 +17,7 @@ import net.corda.core.serialization.SingletonSerializeAsToken
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.NetworkHostAndPort
 import net.corda.node.VersionInfo
+import net.corda.node.internal.StateLoaderImpl
 import net.corda.node.internal.configureDatabase
 import net.corda.node.internal.cordapp.CordappLoader
 import net.corda.node.services.api.SchemaService
@@ -61,12 +62,12 @@ fun makeTestIdentityService(vararg identities: PartyAndCertificate) = InMemoryId
 open class MockServices private constructor(
         cordappLoader: CordappLoader,
         override val validatedTransactions: WritableTransactionStorage,
+        protected val stateLoader: StateLoader,
         override val identityService: IdentityService,
         override val networkParameters: NetworkParameters,
         private val initialIdentity: TestIdentity,
         private val moreKeys: Array<out KeyPair>
-) : ServiceHub, StateLoader by validatedTransactions {
-
+) : ServiceHub, StateLoader by stateLoader {
     companion object {
         @JvmStatic
         val MOCK_VERSION_INFO = VersionInfo(1, "Mock release", "Mock revision", "Mock Vendor")
@@ -133,7 +134,12 @@ open class MockServices private constructor(
 
     private constructor(cordappLoader: CordappLoader, identityService: IdentityService, networkParameters: NetworkParameters,
                         initialIdentity: TestIdentity, moreKeys: Array<out KeyPair>)
-            : this(cordappLoader, MockTransactionStorage(), identityService, networkParameters, initialIdentity, moreKeys)
+            : this(cordappLoader, MockTransactionStorage(), MockAttachmentStorage(), identityService, networkParameters, initialIdentity, moreKeys)
+
+    private constructor(cordappLoader: CordappLoader, validatedTransactions: WritableTransactionStorage,
+                        attachments: MockAttachmentStorage, identityService: IdentityService, networkParameters: NetworkParameters,
+                        initialIdentity: TestIdentity, moreKeys: Array<out KeyPair>)
+            : this(cordappLoader, validatedTransactions, StateLoaderImpl(validatedTransactions, attachments), identityService, networkParameters, initialIdentity, moreKeys)
 
     /**
      * Create a mock [ServiceHub] that looks for app code in the given package names, uses the provided identity service
@@ -230,7 +236,7 @@ open class MockServices private constructor(
     override val cordappProvider: CordappProvider get() = mockCordappProvider
 
     internal fun makeVaultService(hibernateConfig: HibernateConfiguration, schemaService: SchemaService): VaultServiceInternal {
-        val vaultService = NodeVaultService(Clock.systemUTC(), keyManagementService, validatedTransactions, hibernateConfig)
+        val vaultService = NodeVaultService(Clock.systemUTC(), keyManagementService, stateLoader, attachments, hibernateConfig)
         HibernateObserver.install(vaultService.rawUpdates, hibernateConfig, schemaService)
         return vaultService
     }
