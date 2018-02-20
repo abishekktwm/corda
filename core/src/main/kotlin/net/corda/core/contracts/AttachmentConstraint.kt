@@ -28,18 +28,12 @@ data class HashAttachmentConstraint(val attachmentId: SecureHash) : AttachmentCo
  * See: [net.corda.core.node.NetworkParameters.whitelistedContractImplementations]
  * It allows for centralized control over the cordapps that can be used.
  */
-class WhitelistedByZoneAttachmentConstraint : AttachmentConstraint {
-    @Transient
-    /** Whitelisted attachment IDs by contract class name. */
-    internal var whitelistedContractImplementations: Map<String, List<AttachmentId>>? = null
-
+object WhitelistedByZoneAttachmentConstraint : AttachmentConstraint {
     override fun isSatisfiedBy(attachment: Attachment): Boolean {
-        return whitelistedContractImplementations?.let { whitelist ->
-            when (attachment) {
-                is ConstraintAttachment -> attachment.id in (whitelist[attachment.stateContract] ?: emptyList())
+            return when (attachment) {
+                is ConstraintAttachment -> attachment.id in (attachment.whitelistedContractImplementations[attachment.stateContract] ?: emptyList())
                 else -> false
             }
-        } ?: throw IllegalStateException("Whitelist must be set before the constraint cat be verified")
     }
 }
 
@@ -63,7 +57,7 @@ object AutomaticHashConstraint : AttachmentConstraint {
  * Used only for passing to the Attachment constraint verification.
  * Encapsulates a [ContractAttachment] and the state contract
  */
-class ConstraintAttachment(val contractAttachment: ContractAttachment, val stateContract: ContractClassName) : Attachment by contractAttachment {
+class ConstraintAttachment(val contractAttachment: ContractAttachment, val stateContract: ContractClassName, val whitelistedContractImplementations: Map<String, List<AttachmentId>>) : Attachment by contractAttachment {
     init {
         require(stateContract in contractAttachment.allContracts) {
             "This ConstraintAttachment was not initialised properly"

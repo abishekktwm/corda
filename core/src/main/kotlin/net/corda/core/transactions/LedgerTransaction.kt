@@ -6,6 +6,7 @@ import net.corda.core.identity.Party
 import net.corda.core.internal.UpgradeCommand
 import net.corda.core.internal.castIfPossible
 import net.corda.core.internal.uncheckedCast
+import net.corda.core.node.services.AttachmentId
 import net.corda.core.serialization.CordaSerializable
 import net.corda.core.utilities.Try
 import java.security.PublicKey
@@ -39,7 +40,8 @@ data class LedgerTransaction(
         override val id: SecureHash,
         override val notary: Party?,
         val timeWindow: TimeWindow?,
-        val privacySalt: PrivacySalt
+        val privacySalt: PrivacySalt,
+        private val whitelistedContractImplementations: Map<String, List<AttachmentId>> = emptyMap()
 ) : FullTransaction() {
     //DOCEND 1
     init {
@@ -108,7 +110,7 @@ data class LedgerTransaction(
             }
 
             val contractAttachment = uniqueAttachmentsForStateContract.first()
-            if (!state.constraint.isSatisfiedBy(ConstraintAttachment(contractAttachment, state.contract))) {
+            if (!state.constraint.isSatisfiedBy(ConstraintAttachment(contractAttachment, state.contract, whitelistedContractImplementations))) {
                 throw TransactionVerificationException.ContractConstraintRejection(id, state.contract)
             }
         }
