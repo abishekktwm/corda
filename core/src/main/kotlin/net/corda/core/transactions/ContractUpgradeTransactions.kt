@@ -5,7 +5,6 @@ import net.corda.core.crypto.SecureHash
 import net.corda.core.crypto.TransactionSignature
 import net.corda.core.crypto.serializedHash
 import net.corda.core.identity.Party
-import net.corda.core.internal.resolve
 import net.corda.core.node.ServicesForResolution
 import net.corda.core.serialization.CordaSerializable
 import net.corda.core.utilities.toBase58String
@@ -44,7 +43,25 @@ data class ContractUpgradeWireTransaction(
     override val id: SecureHash by lazy { serializedHash(inputs + notary).hashConcat(hiddenComponentHash) }
 
     /** Resolves input states and contract attachments, and builds a ContractUpgradeLedgerTransaction. */
-    fun resolve(services: ServicesForResolution, sigs: List<TransactionSignature>) = resolve(services, services.attachments, sigs)
+    fun resolve(services: ServicesForResolution, sigs: List<TransactionSignature>): ContractUpgradeLedgerTransaction {
+        val resolvedInputs = inputs.map { ref ->
+            services.loadState(ref).let { StateAndRef(it, ref) }
+        }
+        val legacyContractClassName = resolvedInputs.first().state.contract
+        val legacyContractAttachment = services.attachments.openAttachment(legacyContractAttachmentId)
+                ?: throw AttachmentResolutionException(legacyContractAttachmentId)
+        val upgradedContractAttachment = services.attachments.openAttachment(upgradedContractAttachmentId)
+                ?: throw AttachmentResolutionException(upgradedContractAttachmentId)
+        return ContractUpgradeLedgerTransaction(
+                resolvedInputs,
+                notary,
+                ContractAttachment(legacyContractAttachment, legacyContractClassName),
+                ContractAttachment(upgradedContractAttachment, upgradeContractClassName),
+                id,
+                privacySalt,
+                sigs
+        )
+    }
 
     fun buildFilteredTransaction(): ContractUpgradeFilteredTransaction {
         return ContractUpgradeFilteredTransaction(inputs, notary, hiddenComponentHash)
@@ -122,7 +139,7 @@ data class ContractUpgradeLedgerTransaction(
         val inputConstraint = input.state.constraint
         val outputConstraint = when (inputConstraint) {
             is HashAttachmentConstraint -> HashAttachmentConstraint(upgradedContractAttachment.id)
-        // TODO: handle other types of constraints: signature & network map whitelist
+            //TODO: handle 'is WhitelistedByZoneAttachmentConstraint'
             else -> throw IllegalArgumentException("Unsupported input contract constraint $inputConstraint")
         }
         // TODO: re-map encumbrance pointers

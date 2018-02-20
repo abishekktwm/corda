@@ -30,8 +30,8 @@ class ValidatingNotaryFlow(otherSideSession: FlowSession, service: TrustedAuthor
             val stx = receiveTransaction()
             val notary = stx.notary
             checkNotary(notary)
-            verifySignatures(stx)
             resolveAndContractVerify(stx)
+            verifySignatures(stx)
             val timeWindow: TimeWindow? = if (stx.coreTransaction is WireTransaction) stx.tx.timeWindow else null
             return TransactionParts(stx.id, stx.inputs, timeWindow, notary!!)
         } catch (e: Exception) {

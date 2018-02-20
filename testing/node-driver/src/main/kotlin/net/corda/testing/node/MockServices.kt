@@ -2,6 +2,7 @@ package net.corda.testing.node
 
 import com.google.common.collect.MutableClassToInstanceMap
 import net.corda.core.contracts.ContractClassName
+import net.corda.core.contracts.StateRef
 import net.corda.core.cordapp.CordappProvider
 import net.corda.core.crypto.*
 import net.corda.core.flows.FlowLogic
@@ -17,7 +18,7 @@ import net.corda.core.serialization.SingletonSerializeAsToken
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.NetworkHostAndPort
 import net.corda.node.VersionInfo
-import net.corda.node.internal.StateLoaderImpl
+import net.corda.node.internal.ServicesForResolutionImpl
 import net.corda.node.internal.configureDatabase
 import net.corda.node.internal.cordapp.CordappLoader
 import net.corda.node.services.api.SchemaService
@@ -62,12 +63,11 @@ fun makeTestIdentityService(vararg identities: PartyAndCertificate) = InMemoryId
 open class MockServices private constructor(
         cordappLoader: CordappLoader,
         override val validatedTransactions: WritableTransactionStorage,
-        protected val stateLoader: StateLoader,
         override val identityService: IdentityService,
         override val networkParameters: NetworkParameters,
         private val initialIdentity: TestIdentity,
         private val moreKeys: Array<out KeyPair>
-) : ServiceHub, StateLoader by stateLoader {
+) : ServiceHub {
     companion object {
         @JvmStatic
         val MOCK_VERSION_INFO = VersionInfo(1, "Mock release", "Mock revision", "Mock Vendor")
@@ -134,12 +134,7 @@ open class MockServices private constructor(
 
     private constructor(cordappLoader: CordappLoader, identityService: IdentityService, networkParameters: NetworkParameters,
                         initialIdentity: TestIdentity, moreKeys: Array<out KeyPair>)
-            : this(cordappLoader, MockTransactionStorage(), MockAttachmentStorage(), identityService, networkParameters, initialIdentity, moreKeys)
-
-    private constructor(cordappLoader: CordappLoader, validatedTransactions: WritableTransactionStorage,
-                        attachments: MockAttachmentStorage, identityService: IdentityService, networkParameters: NetworkParameters,
-                        initialIdentity: TestIdentity, moreKeys: Array<out KeyPair>)
-            : this(cordappLoader, validatedTransactions, StateLoaderImpl(validatedTransactions, attachments), identityService, networkParameters, initialIdentity, moreKeys)
+            : this(cordappLoader, MockTransactionStorage(), identityService, networkParameters, initialIdentity, moreKeys)
 
     /**
      * Create a mock [ServiceHub] that looks for app code in the given package names, uses the provided identity service
@@ -178,7 +173,7 @@ open class MockServices private constructor(
     /**
      * Create a mock [ServiceHub] that can't load CorDapp code, and which uses a default service identity.
      */
-    constructor(cordappPackages: List<String>): this(cordappPackages, CordaX500Name("TestIdentity", "", "GB"), makeTestIdentityService())
+    constructor(cordappPackages: List<String>) : this(cordappPackages, CordaX500Name("TestIdentity", "", "GB"), makeTestIdentityService())
 
     /**
      * Create a mock [ServiceHub] which uses the package of the caller to find CorDapp code. It uses the provided identity service
@@ -213,7 +208,8 @@ open class MockServices private constructor(
      * Create a mock [ServiceHub] which uses the package of the caller to find CorDapp code. It uses a default service
      * identity.
      */
-    constructor(): this(listOf(getCallerPackage()), CordaX500Name("TestIdentity", "", "GB"), makeTestIdentityService())
+    constructor() : this(listOf(getCallerPackage()), CordaX500Name("TestIdentity", "", "GB"), makeTestIdentityService())
+
 
     override fun recordTransactions(statesToRecord: StatesToRecord, txs: Iterable<SignedTransaction>) {
         txs.forEach {
@@ -235,8 +231,10 @@ open class MockServices private constructor(
     private val mockCordappProvider: MockCordappProvider = MockCordappProvider(cordappLoader, attachments, networkParameters.whitelistedContractImplementations)
     override val cordappProvider: CordappProvider get() = mockCordappProvider
 
+    private val servicesForResolution get() = ServicesForResolutionImpl(identityService, attachments, cordappProvider, networkParameters, validatedTransactions)
+
     internal fun makeVaultService(hibernateConfig: HibernateConfiguration, schemaService: SchemaService): VaultServiceInternal {
-        val vaultService = NodeVaultService(Clock.systemUTC(), keyManagementService, stateLoader, attachments, hibernateConfig)
+        val vaultService = NodeVaultService(Clock.systemUTC(), keyManagementService, servicesForResolution, hibernateConfig)
         HibernateObserver.install(vaultService.rawUpdates, hibernateConfig, schemaService)
         return vaultService
     }
@@ -255,6 +253,8 @@ open class MockServices private constructor(
     fun addMockCordapp(contractClassName: ContractClassName) {
         mockCordappProvider.addMockCordapp(contractClassName, attachments)
     }
+
+    override fun loadState(stateRef: StateRef) = servicesForResolution.loadState(stateRef)
 }
 
 class MockKeyManagementService(val identityService: IdentityService,

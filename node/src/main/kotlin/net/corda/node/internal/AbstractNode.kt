@@ -209,19 +209,21 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
             val metrics = MetricRegistry()
             val transactionStorage = makeTransactionStorage(database, configuration.transactionCacheSizeBytes)
             attachments = NodeAttachmentService(metrics, configuration.attachmentContentCacheSizeBytes, configuration.attachmentCacheBound)
-            val stateLoader = StateLoaderImpl(transactionStorage, attachments)
+            val cordappProvider = CordappProviderImpl(cordappLoader, attachments, networkParameters.whitelistedContractImplementations)
+            val servicesForResolution = ServicesForResolutionImpl(identityService, attachments, cordappProvider, networkParameters, transactionStorage)
             val nodeProperties = NodePropertiesPersistentStore(StubbedNodeUniqueIdProvider::value, database)
             val nodeServices = makeServices(
                     keyPairs,
                     schemaService,
                     transactionStorage,
-                    stateLoader,
                     metrics,
+                    servicesForResolution,
                     database,
                     nodeInfo,
                     identityService,
                     networkMapCache,
                     nodeProperties,
+                    cordappProvider,
                     networkParameters)
             val notaryService = makeNotaryService(nodeServices, database)
             val smm = makeStateMachineManager(database)
@@ -231,7 +233,7 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
                     platformClock,
                     database,
                     flowStarter,
-                    stateLoader,
+                    servicesForResolution,
                     unfinishedSchedules = busyNodeLatch,
                     serverThread = serverThread,
                     flowLogicRefFactory = flowLogicRefFactory,
@@ -548,30 +550,31 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
     private fun makeServices(keyPairs: Set<KeyPair>,
                              schemaService: SchemaService,
                              transactionStorage: WritableTransactionStorage,
-                             stateLoader: StateLoader,
                              metrics: MetricRegistry,
+                             servicesForResolution: ServicesForResolution,
                              database: CordaPersistence,
                              nodeInfo: NodeInfo,
                              identityService: IdentityService,
                              networkMapCache: NetworkMapCacheInternal,
                              nodeProperties: NodePropertiesStore,
+                             cordappProvider: CordappProviderInternal,
                              networkParameters: NetworkParameters): MutableList<Any> {
         checkpointStorage = DBCheckpointStorage()
-        val cordappProvider = CordappProviderImpl(cordappLoader, attachments, networkParameters.whitelistedContractImplementations)
+
         val keyManagementService = makeKeyManagementService(identityService, keyPairs)
         _services = ServiceHubInternalImpl(
                 identityService,
                 keyManagementService,
                 schemaService,
                 transactionStorage,
-                stateLoader,
                 MonitoringService(metrics),
                 cordappProvider,
                 database,
                 nodeInfo,
                 networkMapCache,
                 nodeProperties,
-                networkParameters)
+                networkParameters,
+                servicesForResolution)
         network = makeMessagingService(database, nodeInfo, nodeProperties, networkParameters)
         val tokenizableServices = mutableListOf(attachments, network, services.vaultService,
                 services.keyManagementService, services.identityService, platformClock,
@@ -761,8 +764,8 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
     }
 
     protected open fun generateKeyPair() = cryptoGenerateKeyPair()
-    protected open fun makeVaultService(keyManagementService: KeyManagementService, stateLoader: StateLoader, hibernateConfig: HibernateConfiguration): VaultServiceInternal {
-        return NodeVaultService(platformClock, keyManagementService, stateLoader, attachments, hibernateConfig)
+    protected open fun makeVaultService(keyManagementService: KeyManagementService, services: ServicesForResolution, hibernateConfig: HibernateConfiguration): VaultServiceInternal {
+        return NodeVaultService(platformClock, keyManagementService, services, hibernateConfig)
     }
 
     private inner class ServiceHubInternalImpl(
@@ -773,20 +776,20 @@ abstract class AbstractNode(val configuration: NodeConfiguration,
             override val keyManagementService: KeyManagementService,
             override val schemaService: SchemaService,
             override val validatedTransactions: WritableTransactionStorage,
-            private val stateLoader: StateLoader,
             override val monitoringService: MonitoringService,
             override val cordappProvider: CordappProviderInternal,
             override val database: CordaPersistence,
             override val myInfo: NodeInfo,
             override val networkMapCache: NetworkMapCacheInternal,
             override val nodeProperties: NodePropertiesStore,
-            override val networkParameters: NetworkParameters
-    ) : SingletonSerializeAsToken(), ServiceHubInternal, StateLoader by stateLoader {
+            override val networkParameters: NetworkParameters,
+            private val servicesForResolution: ServicesForResolution
+    ) : SingletonSerializeAsToken(), ServiceHubInternal, ServicesForResolution by servicesForResolution {
         override val rpcFlows = ArrayList<Class<out FlowLogic<*>>>()
         override val stateMachineRecordedTransactionMapping = DBTransactionMappingStorage()
         override val auditService = DummyAuditService()
         override val transactionVerifierService by lazy { makeTransactionVerifierService() }
-        override val vaultService by lazy { makeVaultService(keyManagementService, stateLoader, database.hibernateConfig) }
+        override val vaultService by lazy { makeVaultService(keyManagementService, servicesForResolution, database.hibernateConfig) }
         override val contractUpgradeService by lazy { ContractUpgradeServiceImpl() }
         override val attachments: AttachmentStorage get() = this@AbstractNode.attachments
         override val networkService: MessagingService get() = network
