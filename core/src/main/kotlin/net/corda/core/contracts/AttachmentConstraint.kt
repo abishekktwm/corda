@@ -27,18 +27,19 @@ data class HashAttachmentConstraint(val attachmentId: SecureHash) : AttachmentCo
  * An [AttachmentConstraint] that verifies that the hash of the attachment is in the network parameters whitelist.
  * See: [net.corda.core.node.NetworkParameters.whitelistedContractImplementations]
  * It allows for centralized control over the cordapps that can be used.
- *
- * @param whitelistedContractImplementations whitelisted attachment IDs by contract class name.
  */
-class WhitelistedByZoneAttachmentConstraint(private val whitelistedContractImplementations: Map<String, List<AttachmentId>>) : AttachmentConstraint {
+class WhitelistedByZoneAttachmentConstraint : AttachmentConstraint {
+    @Transient
+    /** Whitelisted attachment IDs by contract class name. */
+    internal var whitelistedContractImplementations: Map<String, List<AttachmentId>>? = null
 
     override fun isSatisfiedBy(attachment: Attachment): Boolean {
-        return whitelistedContractImplementations.let { whitelist ->
+        return whitelistedContractImplementations?.let { whitelist ->
             when (attachment) {
                 is ConstraintAttachment -> attachment.id in (whitelist[attachment.stateContract] ?: emptyList())
                 else -> false
             }
-        }
+        } ?: throw IllegalStateException("Whitelist must be set before the constraint cat be verified")
     }
 }
 

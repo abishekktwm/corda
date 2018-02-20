@@ -88,6 +88,10 @@ class WireTransaction(componentGroups: List<ComponentGroup>, val privacySalt: Pr
                 resolveIdentity = { services.identityService.partyFromKey(it) },
                 resolveAttachment = { services.attachments.openAttachment(it) },
                 resolveStateRef = { services.loadState(it) },
+                populateConstraintContext = { c: AttachmentConstraint ->
+                    if (c is WhitelistedByZoneAttachmentConstraint)
+                        c.whitelistedContractImplementations = services.networkParameters.whitelistedContractImplementations
+                },
                 maxTransactionSize = services.networkParameters.maxTransactionSize
         )
     }
@@ -114,7 +118,8 @@ class WireTransaction(componentGroups: List<ComponentGroup>, val privacySalt: Pr
             resolveIdentity: (PublicKey) -> Party?,
             resolveAttachment: (SecureHash) -> Attachment?,
             resolveStateRef: (StateRef) -> TransactionState<*>?,
-            maxTransactionSize: Int
+            maxTransactionSize: Int,
+            populateConstraintContext: (AttachmentConstraint) -> Unit = {}
     ): LedgerTransaction {
         // Look up public keys to authenticated identities.
         val authenticatedArgs = commands.map {
@@ -122,7 +127,9 @@ class WireTransaction(componentGroups: List<ComponentGroup>, val privacySalt: Pr
             CommandWithParties(it.signers, parties, it.value)
         }
         val resolvedInputs = inputs.map { ref ->
-            resolveStateRef(ref)?.let { StateAndRef(it, ref) } ?: throw TransactionResolutionException(ref.txhash)
+            val input = resolveStateRef(ref)?.let { StateAndRef(it, ref) } ?: throw TransactionResolutionException(ref.txhash)
+            populateConstraintContext(input.state.constraint)
+            input
         }
         val attachments = attachments.map { resolveAttachment(it) ?: throw AttachmentResolutionException(it) }
         val ltx = LedgerTransaction(resolvedInputs, outputs, authenticatedArgs, attachments, id, notary, timeWindow, privacySalt)
